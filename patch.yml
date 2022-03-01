@@ -1,0 +1,145 @@
+---
+  - name: playbook 
+    hosts: target1
+    vars:
+        # Oracle Database ENV parameters  
+      - ORACLE_HOME: /opt1/app/oracle/product/12.2.0/dbhome_1
+      - ORACLE_ROOT: /opt1/app 
+      - ORACLE_BASE: /opt1/app/oracle
+      - ORACLE_UNQNAME: testdb                    
+      - ORACLE_SID: testdb
+      - HOSTNAME: target                      
+        # Software Repository Location on the Master Ansible Server  
+      - SRC_SW: /home/oracle/sw
+        # Software Location on the Target Ansible
+      - SW_HOME: /opt1/app/sw   
+        # OPatch Package used during the patching
+      - OPATCH_BIN_FILES: p6880880_122010_Linux-x86-64.zip
+        # patch version to apply to the database
+      - PATCH_BIN_FILES: p33587128_122010_Linux-x86-64.zip
+      - PATCH_NUMBER: 33587128
+
+    become: yes
+    tasks:
+#      - name: Create the directory containing software
+#        become: yes
+#        file:
+#           path: "{{ SW_HOME }}"
+#        state: directory
+
+      - name: Change oracle home ownership and permissions
+        become: yes
+        file:
+          recurse: yes
+          path: "{{ SW_HOME }}"
+          owner: oracle
+          group: oinstall
+          mode: 0775
+
+      - name: Copy OPatch binaries to /opt1/app/sw
+        become: yes
+        ansible.builtin.copy:
+          src: "{{ SRC_SW }}/{{ OPATCH_BIN_FILES }}"
+          dest: "{{ SW_HOME }}/{{ OPATCH_BIN_FILES }}"
+          owner: oracle
+          group: oinstall
+          mode: 0770
+
+      - name: Make a backup of the current OPatch directory
+        copy: 
+           remote_src: True 
+           src:  "{{ ORACLE_HOME }}/OPatch"
+           dest: "{{ ORACLE_HOME }}/OPatch.bak"
+
+
+      - name: Unzip the archive OPatch in the ORACLE_HOME directory
+        become: yes
+        ansible.builtin.unarchive:
+             src: "{{ SW_HOME }}/{{ OPATCH_BIN_FILES }}"
+             dest: "{{ ORACLE_HOME }}"
+             remote_src: yes
+             owner: oracle
+             group: oinstall
+
+      - name: Copy patch to /opt1/app/sw
+        become: yes
+        ansible.builtin.copy:
+          src: "{{ SRC_SW }}/{{ PATCH_BIN_FILES }}"
+          dest: "{{ SW_HOME }}/{{ PATCH_BIN_FILES }}"
+          owner: oracle
+          group: oinstall
+          mode: 0770
+
+      - name: Unzip the archive with the patch bin directly in the sw directory 
+        become: yes
+        ansible.builtin.unarchive:
+             src: "{{ SW_HOME }}/{{ PATCH_BIN_FILES }}"
+             dest: "{{ SW_HOME }}"
+             remote_src: yes
+             owner: oracle
+             group: oinstall
+
+#      - name: Update /etc/environment with the new path
+#        lineinfile:
+#           dest: /etc/environment
+#           line: "PATH={{ ORACLE_HOME }}/OPatch:$PATH"
+#        become: true
+#        become_user: root
+
+#      - name: export path variable and apply patch
+#        shell: export PATH=/opt1/app/oracle/product/12.2.0/dbhome_1/OPatch:$PATH
+#        become: yes
+#        become_user: oracle
+
+
+      - name: Set environment parameters
+        become: yes
+        blockinfile:
+         path: /home/oracle/.bash_profile
+         insertafter: EOF
+         block: |
+          ORACLE_SID="{{ORACLE_SID}}"
+          ORAENV_ASK=NO
+          . oraenv
+          export ORAENV_ASK=NO
+          export ORACLE_SID="{{ORACLE_SID}}"
+          export ORACLE_HOME="{{ORACLE_HOME}}"
+          export PATH=/usr/sbin:/usr/local/bin:$PATH
+          export PATH=$ORACLE_HOME/bin:$PATH
+          export PATH=$ORACLE_HOME/OPatch:$PATH
+      
+      - name: Copy script to start and stop the database
+        become: yes
+        ansible.builtin.copy:
+          src: "{{ SRC_SW }}/oracle_start_stop.sh"
+          dest: "{{ SW_HOME }}/oracle_start_stop.sh"
+          owner: oracle
+          group: oinstall
+          mode: 0770
+
+      - name: stop database
+        command: "{{SW_HOME}}/oracle_start_stop.sh stop"    
+        become: yes
+        become_user: oracle
+        become_flags: -i
+
+
+      - name:  apply patch
+        command: opatch apply -silent
+        become: yes
+        become_user: oracle
+        become_flags: -i
+        register: installer_output
+        args:
+          chdir: "{{ SW_HOME }}/{{ PATCH_NUMBER }}"
+      
+      - debug:
+          var: installer_output.stdout
+
+
+      - name: start database
+        command: "{{SW_HOME}}/oracle_start_stop.sh start"
+        become: yes
+        become_user: oracle
+        become_flags: -i
+
