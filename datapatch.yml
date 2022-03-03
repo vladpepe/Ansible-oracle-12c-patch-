@@ -1,0 +1,40 @@
+---
+  - name: playbook 
+    hosts: target1
+    vars:
+        # Oracle Database ENV parameters  
+      - ORACLE_HOME: /opt1/app/oracle/product/12.2.0/dbhome_1
+      - ORACLE_SID: testdb
+        # Software Repository Location on the Master Ansible Server  
+      - SRC_SW: /home/oracle/sw
+        # Software Location on the Target Ansible
+      - SW_HOME: /opt1/app/sw   
+
+    become: yes
+    tasks:
+      - name: Copy script to start and stop the database
+        become: yes
+        ansible.builtin.copy:
+          src: "{{ SRC_SW }}/oracle_start_stop.sh"
+          dest: "{{ SW_HOME }}/oracle_start_stop.sh"
+          owner: oracle
+          group: oinstall
+          mode: 0770
+
+      - name: start database
+        command: "{{SW_HOME}}/oracle_start_stop.sh start"    
+        become: yes
+        become_user: oracle
+        become_flags: -i
+
+
+      - name:  execute datapatch, the database has to be in read write mode
+        command: "{{ORACLE_HOME}}/OPatch/datapatch -verbose"
+        become: yes
+        become_user: oracle
+        become_flags: -i
+        register: installer_output
+      
+      - debug:
+          var: installer_output.stdout
+
